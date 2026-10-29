@@ -1,0 +1,14 @@
+{
+  "name": "Nebula Rush",
+  "short_name": "Nebula Rush",
+  "description": "Climb through the alien fleet, beat the motherships and evolve your rocket.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#05060d",
+  "theme_color": "#05060d",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
