@@ -530,6 +530,7 @@ body.title-up #hangar { visibility: hidden; }
       <button class="btn-ghost" id="setSound" type="button">Sound: on</button>
       <button class="btn-ghost" id="setGfx" type="button">Graphics: high</button>
       <button class="btn-ghost" id="setCam" type="button">Camera: Chase</button>
+      <button class="btn-ghost" id="setEco" type="button">Super optimised: off</button>
     </div>
     <div class="danger">
       <span class="lbl">Danger zone</span>
@@ -1068,6 +1069,10 @@ const GFX_ORDER = ['low', 'high', 'ultra'], GFX_NAME = { low: 'low', high: 'high
 const nextGfx = () => GFX_ORDER[(GFX_ORDER.indexOf(save.gfx === 'low' || save.gfx === 'ultra' ? save.gfx : 'high') + 1) % 3];
 let ULTRA = false;
 let MOBILE = false, frameNo = 0;
+// super optimised: the lightest the game can go. Renders at a lower resolution, drops the background asteroid field,
+// the rock wall detail, the radar, the dust motes and the long view. Turns on by itself on phones the first time.
+let ECO = false;
+try { ECO = localStorage.getItem('nebula-rush-eco') === '1'; } catch (e) {}
 const _ultraSun = new THREE.Vector3(160, 120, 300);
 let ultraLights = null, rockGeosLo = null, rockGeosHi = null, rockGeosMid = null, ultraSky = null;
 function setupGraphics() {
@@ -1076,7 +1081,7 @@ function setupGraphics() {
   ULTRA = ultra;
   // ultra supersamples: renders at up to 3x the screen's pixels and scales down
   const dpr = devicePixelRatio || 1;
-  renderer.setPixelRatio(ultra ? Math.min(3, dpr * 1.6) : high ? Math.min(2, dpr) : 1);
+  renderer.setPixelRatio(ECO ? 0.5 : ultra ? Math.min(3, dpr * 1.6) : high ? Math.min(2, dpr) : 1);
   if (composer) { try { composer.renderTarget1.dispose(); composer.renderTarget2.dispose(); } catch (e) {} }
   composer = null;
   setUltra(ultra);
@@ -2034,6 +2039,7 @@ function applyView() {
   try { localStorage.setItem('nebula-rush-view', JSON.stringify(view)); } catch (e) {}
   // a wider field of view shows more of space, so things spawn further out to match
   SPAWN_FAR = Math.round(view.dist * (1 + Math.max(0, view.fov - 62) / 90));
+  if (ECO) SPAWN_FAR = Math.min(SPAWN_FAR, 420);
   camera.far = Math.max(3000, SPAWN_FAR * 1.6 + 600); camera.updateProjectionMatrix();
   const n = clamp(Math.ceil((SPAWN_FAR + 240) / 40), 8, EDGE_RINGS), gap = (SPAWN_FAR + 240) / n;
   if (n !== EDGE_N || gap !== EDGE_GAP) { EDGE_N = n; EDGE_GAP = gap; for (let i = 0; i < EDGE_RINGS; i++) edgeY[i] = i * gap - 220; }
@@ -2727,11 +2733,11 @@ const hash1 = n => { const x = Math.sin(n * 12.9898) * 43758.5453; return x - Ma
 function updateEdgeRocks(dt, on) {
   edgeRocks.visible = on;
   if (!on || !G) return;
-  const span = EDGE_N * EDGE_GAP, top = span - 240;
+  const span = EDGE_N * EDGE_GAP, top = span - 240, rings = ECO ? Math.min(EDGE_N, 5) : EDGE_N;
   for (let r = 0; r < EDGE_N; r++) { edgeY[r] -= scroll * dt; if (edgeY[r] < -240) edgeY[r] += span; else if (edgeY[r] > top) edgeY[r] -= span; }
   const boss = !!(G.boss || G.finale);
   edgeMat.color.set(boss ? 0x4a2030 : (ZONES[G.zi] ? ZONES[G.zi].rock : 0x5a5260)); edgeMat.emissive.set(boss ? 0x3a0612 : 0x14080e);
-  const per = MOBILE ? 36 : EDGE_PER, step = Math.PI * 2 / per, big = clamp(G.ax / 130, 1, 6), n = EDGE_N * per;
+  const per = ECO ? 10 : MOBILE ? 36 : EDGE_PER, step = Math.PI * 2 / per, big = clamp(G.ax / 130, 1, 6), n = rings * per;
   edgeRocks.count = n;
   for (let i = 0; i < n; i++) {
     const ring = Math.floor(i / per), slot = i % per, h = ring * 997 + slot * 7 + (boss ? 0.5 : 0), y = edgeY[ring];
@@ -2767,7 +2773,7 @@ function ambSeed(o, R, RZ, far) {
   }
 }
 function updateAmbient(dt) {
-  const on = !!G && (state === 'flight' || state === 'ending') && !G.boss && !G.finale && G.alt > 3;
+  const on = !ECO && !!G && (state === 'flight' || state === 'ending') && !G.boss && !G.finale && G.alt > 3;
   if (!on) { if (ambOn) ambMeshes.forEach(m => { m.visible = false; }); ambOn = false; return; }
   // the field fills the space you can see, but its density never depends on the view distance:
   // a longer view switches on more rocks, a shorter one fewer
@@ -3665,20 +3671,21 @@ function update(dt) {
   SPAWN_OFF = !G.boss && !G.finale; OX = G.x; OZ = G.z; SPAWN_Y = SPAWN_OFF ? SPAWN_FAR : SPAWN_NEAR;
   spawnFrame();
   if (state === 'flight' && G.travD > 30 && G.trav > 1) {
+    const ek = ECO ? 2.5 : 1; // super optimised: about 2.5x fewer things spawn
     const af = clamp(LW * LZ / 55, 0.6, 3.2), z = ZONES[G.zi], ds = G.trav * dt, lvl = G.alienLvl = BOSSES.filter(b => G.alt >= b.end).length;
     const dk = diffK(), om = G.boss ? 1 : 4 + 6 * dk;
-    if ((G.acc.rock += ds) > U * 0.55 / (Math.max(0.2, z.dens) * af * om)) { G.acc.rock = rand(-0.1, 0.1) * U; if (z.dens > 0) { grp(); spawnRock(); } }
-    if ((G.acc.dust += ds) > U * 0.42 / Math.sqrt(af) / (G.boss ? 1 : 4)) { G.acc.dust = rand(-0.15, 0.1) * U; grp(); spawnDust(); }
+    if ((G.acc.rock += ds) > ek * U * 0.55 / (Math.max(0.2, z.dens) * af * om)) { G.acc.rock = rand(-0.1, 0.1) * U; if (z.dens > 0) { grp(); spawnRock(); } }
+    if ((G.acc.dust += ds) > ek * U * 0.42 / Math.sqrt(af) / (G.boss ? 1 : 4)) { G.acc.dust = rand(-0.15, 0.1) * U; grp(); spawnDust(); }
     if ((G.fuelT -= dt) <= 0 && !G.boss) { G.fuelT = rand(5, 7.5); grp(0.45); spawnFuel(); }
-    if (G.zi <= 1) { if ((G.acc.cloud += ds) > U * 0.35) { G.acc.cloud = rand(0, 0.2) * U; grp(); spawnCloud(); } }
-    if (G.zi === 7 && (G.acc.belt += ds) > U * 1.3) { G.acc.belt = rand(-0.2, 0.2) * U; grp(0.6); beltEvent(); }
-    if ((G.acc.scen += ds) > U * 0.2 / (1 + 0.45 * lvl) / (G.boss ? 1 : 3.5)) { G.acc.scen = rand(-0.05, 0.05) * U; grp(); spawnScenery(); }
-    if ((G.acc.ufo += ds) > U * 1.4 / (1 + 0.4 * lvl)) { G.acc.ufo = rand(-0.3, 0.2) * U; grp(); spawnSquadron(); }
-    if ((G.acc.bolt += ds) > U * 0.18 / (1 + 0.3 * lvl)) { G.acc.bolt = rand(-0.1, 0.1) * U; grp(); spawnTracer(); }
+    if (G.zi <= 1) { if ((G.acc.cloud += ds) > ek * U * 0.35) { G.acc.cloud = rand(0, 0.2) * U; grp(); spawnCloud(); } }
+    if (G.zi === 7 && (G.acc.belt += ds) > ek * U * 1.3) { G.acc.belt = rand(-0.2, 0.2) * U; grp(0.6); beltEvent(); }
+    if ((G.acc.scen += ds) > ek * U * 0.2 / (1 + 0.45 * lvl) / (G.boss ? 1 : 3.5)) { G.acc.scen = rand(-0.05, 0.05) * U; grp(); spawnScenery(); }
+    if ((G.acc.ufo += ds) > ek * U * 1.4 / (1 + 0.4 * lvl)) { G.acc.ufo = rand(-0.3, 0.2) * U; grp(); spawnSquadron(); }
+    if ((G.acc.bolt += ds) > ek * U * 0.18 / (1 + 0.3 * lvl)) { G.acc.bolt = rand(-0.1, 0.1) * U; grp(); spawnTracer(); }
     const droneGap = G.boss ? (G.boss.def.n === 2 ? U * 2.2 : 1e9) : U * 1.5 / clamp(0.8 + G.zi * 0.08, 0.8, 1.7) / (1 + 0.12 * lvl) / (2.5 + 5 * dk);
-    if ((G.acc.drone += ds) > droneGap) { G.acc.drone = rand(-0.4, 0.2) * U; grp(Math.random() < 0.3 ? 0.08 : 1); spawnDrone(); }
+    if ((G.acc.drone += ds) > droneGap * ek) { G.acc.drone = rand(-0.4, 0.2) * U; grp(Math.random() < 0.3 ? 0.08 : 1); spawnDrone(); }
     if (G.boss) { if ((G.bossGateT = (G.bossGateT ?? 4) - dt) <= 0) { G.bossGateT = rand(4.5, 6.5); spawnGate(); } }
-    else if ((G.acc.gate += ds) > U * 2) { G.acc.gate = rand(-0.3, 0.3) * U; SGX = SGZ = 0; if (G.my > 0.9) spawnGate(); }
+    else if ((G.acc.gate += ds) > ek * U * 2) { G.acc.gate = rand(-0.3, 0.3) * U; SGX = SGZ = 0; if (G.my > 0.9) spawnGate(); }
     if (!G.warned && G.flightT > 1.8) { G.warned = true; showBanner('Alien invasion', 'Warning · red holograms ahead'); sfx.close(); }
   }
   SPAWN_OFF = false; SROT = false; SPAWN_Y = SPAWN_NEAR; SGX = SGZ = 0;
@@ -3938,7 +3945,7 @@ function render(dt) {
     motePos[i * 3] = m.x; motePos[i * 3 + 1] = m.y; motePos[i * 3 + 2] = m.z;
   }
   moteGeo.attributes.position.needsUpdate = true;
-  motes.visible = !!G && state !== 'countdown';
+  motes.visible = !ECO && !!G && state !== 'countdown';
   for (const m of motherships) {
     m.rotation.y += m.userData.spin * dt; m.position.y -= scroll * 0.06 * dt;
     if (m.position.y < 350) m.position.y += 1100;
@@ -4112,6 +4119,7 @@ const VOL_KEYS = [['volMaster', 'master'], ['volMusic', 'music'], ['volSfx', 'sf
 function renderSettings() {
   for (const [id, k] of VOL_KEYS) { $(id).value = Math.round(vol[k] * 100); $(id + 'V').textContent = Math.round(vol[k] * 100) + '%'; }
   $('setSound').textContent = 'Sound: ' + (soundOn ? 'on' : 'off');
+  $('setEco').textContent = 'Super optimised: ' + (ECO ? 'on' : 'off');
   $('setGfx').textContent = 'Graphics: ' + GFX_NAME[save.gfx === 'low' || save.gfx === 'ultra' ? save.gfx : 'high'];
   $('viewFov').value = view.fov; $('viewFovV').textContent = view.fov + '°';
   $('viewDist').value = view.dist; $('viewDistV').textContent = view.dist;
@@ -4130,6 +4138,7 @@ applyView();
 $('camBtn').addEventListener('click', () => setCam(camMode + 1, true));
 $('pauseCam').addEventListener('click', () => setCam(camMode + 1, false));
 $('setCam').addEventListener('click', () => setCam(camMode + 1, false));
+$('setEco').addEventListener('click', () => setEco(!ECO));
 setCam(camMode, false);
 $('pauseSettings').addEventListener('click', openSettings);
 $('settingsClose').addEventListener('click', closeSettings);
@@ -4359,7 +4368,7 @@ function updateLaserHud() {
 // the laser wheel, sweeps, hunter lasers, target rings, homing drones, mines - are readable from any camera, including cockpit
 const rctx = $('radar').getContext('2d'), _rv = new THREE.Vector3(), _RX = new THREE.Vector3(1, 0, 0), _RZ = new THREE.Vector3(0, 0, 1);
 function updateRadar() {
-  const B = G && G.boss, show = !!B && state === 'flight' && !paused && (!G.finale || (F && F.mode === 'fight'));
+  const B = G && G.boss, show = !ECO && !!B && state === 'flight' && !paused && (!G.finale || (F && F.mode === 'fight'));
   $('radarBox').hidden = !show;
   updateHomers();
   if (!show) return;
@@ -4606,8 +4615,13 @@ $('adminPanel').addEventListener('click', e => {
 });
 
 // ---------- PC / mobile ----------
+function setEco(on) {
+  ECO = on; try { localStorage.setItem('nebula-rush-eco', on ? '1' : '0'); } catch (e) {}
+  setupGraphics(); applyView(); renderSettings();
+}
 function setDevice(d, fromPick) {
   MOBILE = d === 'mobile';
+  if (MOBILE && fromPick) { try { if (localStorage.getItem('nebula-rush-eco') === null) ECO = true; } catch (e) {} }
   try { localStorage.setItem('nebula-rush-device', d); } catch (e) {}
   document.body.classList.toggle('mobile', MOBILE);
   $('devPC').setAttribute('aria-checked', String(!MOBILE)); $('devMobile').setAttribute('aria-checked', String(MOBILE));
